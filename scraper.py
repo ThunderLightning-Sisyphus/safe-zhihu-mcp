@@ -11,6 +11,21 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 logger = logging.getLogger(__name__)
 
+# Regex to strip HTML tags from text (img → [图片], other tags removed)
+_IMG_TAG_RE = re.compile(r'<img\b[^>]*/?\s*>', re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r'<[^>]+>')
+
+
+def _clean_html(text: str) -> str:
+    """Strip HTML tags from text, replacing img tags with [图片]."""
+    if not text:
+        return text
+    text = _IMG_TAG_RE.sub('[图片]', text)
+    text = _HTML_TAG_RE.sub('', text)
+    # Collapse multiple [图片] markers
+    text = re.sub(r'(\[图片\]\s*)+', '[图片] ', text)
+    return text.strip()
+
 
 @dataclass
 class ActivityCard:
@@ -259,6 +274,9 @@ class ZhihuScraper:
                 continue
 
             otype = obj.get("type", "")
+            # Skip non-content types (people, topics, etc.)
+            if otype not in ("answer", "article", "question"):
+                continue
             # Filter by content_type if specified
             if content_type == "question" and otype != "question":
                 continue
@@ -308,19 +326,31 @@ class ZhihuScraper:
         url = f"https://www.zhihu.com/question/{question_id}"
         await self._navigate(url)
 
-        return await self.page.evaluate("""
+        detail = await self.page.evaluate("""
             () => {
-                const result = {};
+                // Helper: strip img tags → [图片], then get text
+                function cleanText(el) {
+                    const clone = el.cloneNode(true);
+                    clone.querySelectorAll('img').forEach(img => {
+                        img.replaceWith('[图片]');
+                    });
+                    return clone.textContent.trim();
+                }
+                function parseNum(s) {
+                    if (!s) return 0;
+                    return parseInt(s.replace(/,/g, '')) || 0;
+                }
 
+                const result = {};
                 const titleEl = document.querySelector('.QuestionHeader-title, h1[class*="QuestionHeader"]');
                 if (titleEl) result.title = titleEl.textContent.trim();
 
                 const descEl = document.querySelector('.QuestionRichText, .QuestionHeader-detail .RichText');
-                if (descEl) result.description = descEl.textContent.trim();
+                if (descEl) result.description = cleanText(descEl);
 
                 const metaEls = document.querySelectorAll('.NumberBoard-itemValue');
-                if (metaEls.length >= 1) result.followers = metaEls[0]?.textContent?.trim();
-                if (metaEls.length >= 2) result.views = metaEls[1]?.textContent?.trim();
+                if (metaEls.length >= 1) result.followers = parseNum(metaEls[0]?.textContent);
+                if (metaEls.length >= 2) result.views = parseNum(metaEls[1]?.textContent);
 
                 const ansCountEl = document.querySelector('.List-headerText span, h4.List-headerText');
                 if (ansCountEl) {
@@ -331,19 +361,19 @@ class ZhihuScraper:
                 const topicEls = document.querySelectorAll('.TopicLink .Popover div, .Tag-content');
                 result.topics = Array.from(topicEls).map(el => el.textContent.trim()).filter(t => t);
 
+                const qid = window.location.pathname.match(/\\/question\\/(\\d+)/)?.[1] || '';
                 const answers = [];
                 const ansItems = document.querySelectorAll('.AnswerItem');
                 ansItems.forEach((item, i) => {
-                    if (i >= 5) return;
+                    if (i >= 10) return;
                     const ans = {};
-                    // Author: find UserLink-link with text inside AuthorInfo-content
                     const authorLinks = item.querySelectorAll('.AuthorInfo-content .UserLink-link');
                     for (const a of authorLinks) {
                         const t = a.textContent.trim();
                         if (t) { ans.author = t; break; }
                     }
                     const contentEl = item.querySelector('.RichContent-inner .RichText');
-                    if (contentEl) ans.excerpt = contentEl.textContent.trim().substring(0, 200);
+                    if (contentEl) ans.excerpt = cleanText(contentEl).substring(0, 200);
                     const voteEl = item.querySelector('button[aria-label*="赞同"]');
                     if (voteEl) {
                         const aria = voteEl.getAttribute('aria-label') || '';
@@ -353,17 +383,28 @@ class ZhihuScraper:
                     const linkEl = item.querySelector('a[href*="/answer/"]');
                     if (linkEl) {
                         const m2 = linkEl.href.match(/answer\\/(\\d+)/);
-                        if (m2) ans.answer_id = m2[1];
+                        if (m2) {
+                            ans.answer_id = m2[1];
+                            ans.url = 'https://www.zhihu.com/question/' + qid + '/answer/' + m2[1];
+                        }
                     }
                     if (ans.author || ans.excerpt) answers.push(ans);
                 });
                 result.answers = answers;
-                result.question_id = window.location.pathname.match(/\\/question\\/(\\d+)/)?.[1] || '';
+                result.question_id = qid;
                 result.url = window.location.href;
 
                 return result;
             }
         """)
+        # Post-process: strip HTML from text fields
+        if detail:
+            if detail.get("description"):
+                detail["description"] = _clean_html(detail["description"])
+            for ans in detail.get("answers", []):
+                if ans.get("excerpt"):
+                    ans["excerpt"] = _clean_html(ans["excerpt"])
+        return detail
 
     # ------------------------------------------------------------------
     # Answer detail
@@ -387,14 +428,18 @@ class ZhihuScraper:
         except Exception:
             pass
 
-        return await self.page.evaluate("""
+        result = await self.page.evaluate("""
             () => {
-                const result = {};
+                function cleanText(el) {
+                    const clone = el.cloneNode(true);
+                    clone.querySelectorAll('img').forEach(img => { img.replaceWith('[图片]'); });
+                    return clone.textContent.trim();
+                }
 
+                const result = {};
                 const qTitle = document.querySelector('.QuestionHeader-title');
                 if (qTitle) result.question_title = qTitle.textContent.trim();
 
-                // Author: find UserLink-link with text inside AuthorInfo-content
                 const authorLinks = document.querySelectorAll('.AuthorInfo-content .UserLink-link');
                 for (const a of authorLinks) {
                     const t = a.textContent.trim();
@@ -405,7 +450,7 @@ class ZhihuScraper:
                 if (headlineEl) result.author_headline = headlineEl.textContent.trim();
 
                 const contentEl = document.querySelector('.AnswerItem .RichText, .RichContent-inner .RichText');
-                if (contentEl) result.content = contentEl.textContent.trim();
+                if (contentEl) result.content = cleanText(contentEl);
 
                 const voteEl = document.querySelector('button[aria-label*="赞同"]');
                 if (voteEl) {
@@ -413,7 +458,6 @@ class ZhihuScraper:
                     const m = aria.match(/(\\d+)/);
                     if (m) result.upvotes = parseInt(m[1]);
                 }
-                // Find comment count for the answer (skip question-level comment button in QuestionHeader)
                 for (const b of document.querySelectorAll('.ContentItem-actions button')) {
                     if (b.textContent.includes('条评论')) {
                         const m = b.textContent.match(/(\\d+)/);
@@ -431,6 +475,10 @@ class ZhihuScraper:
                 return result;
             }
         """)
+        # Post-process: strip HTML from content
+        if result and result.get("content"):
+            result["content"] = _clean_html(result["content"])
+        return result
 
     # ------------------------------------------------------------------
     # Article detail
@@ -441,10 +489,15 @@ class ZhihuScraper:
         url = f"https://zhuanlan.zhihu.com/p/{article_id}"
         await self._navigate(url)
 
-        return await self.page.evaluate("""
+        result = await self.page.evaluate("""
             () => {
-                const result = {};
+                function cleanText(el) {
+                    const clone = el.cloneNode(true);
+                    clone.querySelectorAll('img').forEach(img => { img.replaceWith('[图片]'); });
+                    return clone.textContent.trim();
+                }
 
+                const result = {};
                 const titleEl = document.querySelector('.Post-Title, h1.Post-Title');
                 if (titleEl) result.title = titleEl.textContent.trim();
 
@@ -452,7 +505,7 @@ class ZhihuScraper:
                 if (authorEl) result.author = authorEl.textContent.trim();
 
                 const contentEl = document.querySelector('.Post-RichTextContainer .RichText, .RichText.ztext.Post-RichText');
-                if (contentEl) result.content = contentEl.textContent.trim();
+                if (contentEl) result.content = cleanText(contentEl);
 
                 const voteEl = document.querySelector('button[aria-label*="赞同"], .LikeButton');
                 if (voteEl) {
@@ -476,6 +529,10 @@ class ZhihuScraper:
                 return result;
             }
         """)
+        # Post-process: strip HTML from content
+        if result and result.get("content"):
+            result["content"] = _clean_html(result["content"])
+        return result
 
     # ------------------------------------------------------------------
     # Comments
