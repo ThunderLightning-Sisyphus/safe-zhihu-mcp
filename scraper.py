@@ -218,7 +218,7 @@ class ZhihuScraper:
     async def search(
         self, keyword: str, sort: str = "relevance", content_type: str = "all", count: int = 10
     ) -> List[dict]:
-        """Search Zhihu content by keyword.
+        """Search Zhihu content by keyword via internal API.
 
         Args:
             keyword: Search query
@@ -226,80 +226,76 @@ class ZhihuScraper:
             content_type: "all", "question", "article", "answer"
             count: Max results to return
         """
+        # Use Zhihu's internal search API (more reliable than DOM scraping)
         sort_map = {"relevance": "default", "newest": "created_time", "most_upvoted": "upvoted_count"}
+        type_map = {"all": "general", "question": "general", "article": "general", "answer": "general"}
         sort_param = sort_map.get(sort, "default")
-        url = f"https://www.zhihu.com/search?type=content&q={keyword}&sort={sort_param}"
+        search_type = type_map.get(content_type, "general")
 
-        # Search is a SPA page — navigate and wait for results to render
-        try:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        except PlaywrightTimeout:
-            pass
-        try:
-            await self.page.wait_for_selector('.SearchResult-Card', timeout=15000)
-        except PlaywrightTimeout:
-            logger.warning("Search results did not appear in time")
-        await asyncio.sleep(1)
-
-        results = await self.page.evaluate("""
-            (maxCount) => {
-                const results = [];
-                const items = document.querySelectorAll('.SearchResult-Card');
-
-                items.forEach((item, i) => {
-                    if (i >= maxCount) return;
-                    const result = {};
-
-                    // Find first <a> with zhihu content href
-                    const links = item.querySelectorAll('a[href]');
-                    for (const a of links) {
-                        const href = a.href || '';
-                        if ((href.includes('/question/') || href.includes('/p/') || href.includes('/pub/'))
-                            && a.textContent.trim().length > 2) {
-                            result.title = a.textContent.trim();
-                            result.link = href;
-                            break;
-                        }
-                    }
-                    // Fallback: h2 text without link
-                    if (!result.title) {
-                        const h2 = item.querySelector('h2');
-                        if (h2) result.title = h2.textContent.trim();
-                    }
-
-                    if (result.link) {
-                        if (result.link.includes('/question/') && result.link.includes('/answer/'))
-                            result.type = 'answer';
-                        else if (result.link.includes('/question/'))
-                            result.type = 'question';
-                        else if (result.link.includes('/p/') || result.link.includes('/article/'))
-                            result.type = 'article';
-                        else
-                            result.type = 'other';
-                    }
-
-                    // Author: find UserLink-link with non-empty text inside AuthorInfo
-                    const authorLinks = item.querySelectorAll('.AuthorInfo-content .UserLink-link');
-                    for (const a of authorLinks) {
-                        const t = a.textContent.trim();
-                        if (t) { result.author = t; break; }
-                    }
-
-                    const excerptEl = item.querySelector('.RichText, .CopyrightRichText-richText');
-                    if (excerptEl) result.excerpt = excerptEl.textContent.trim().substring(0, 300);
-
-                    const voteEl = item.querySelector('button[aria-label*="赞同"]');
-                    if (voteEl) {
-                        const aria = voteEl.getAttribute('aria-label') || '';
-                        const m = aria.match(/(\\d+)/);
-                        if (m) result.upvotes = parseInt(m[1]);
-                    }
-
-                    if (result.title) results.push(result);
+        raw = await self.page.evaluate("""async (params) => {
+            try {
+                const url = `https://www.zhihu.com/api/v4/search_v3?t=${params.type}&q=${encodeURIComponent(params.keyword)}&correction=1&offset=0&limit=${params.limit}&lc_idx=0&show_all_topics=0&sort=${params.sort}`;
+                const resp = await fetch(url, {
+                    credentials: 'include',
+                    headers: {'accept': 'application/json', 'x-requested-with': 'fetch'}
                 });
-                return results;
+                if (!resp.ok) return {error: resp.status};
+                return await resp.json();
+            } catch(e) {
+                return {error: e.message};
             }
-        """, count)
+        }""", {"keyword": keyword, "type": search_type, "limit": min(count + 5, 20), "sort": sort_param})
+
+        if isinstance(raw, dict) and "error" in raw:
+            logger.warning(f"Search API error: {raw['error']}")
+            return []
+
+        results = []
+        for item in raw.get("data", []):
+            if item.get("type") != "search_result":
+                continue
+            obj = item.get("object", {})
+            if not obj:
+                continue
+
+            otype = obj.get("type", "")
+            # Filter by content_type if specified
+            if content_type == "question" and otype != "question":
+                continue
+            if content_type == "article" and otype != "article":
+                continue
+            if content_type == "answer" and otype != "answer":
+                continue
+
+            # Strip <em> tags from title/excerpt
+            title = re.sub(r"<[^>]+>", "", obj.get("title", ""))
+            excerpt = re.sub(r"<[^>]+>", "", obj.get("excerpt", ""))
+
+            # Build web URL
+            if otype == "article":
+                link = f"https://zhuanlan.zhihu.com/p/{obj['id']}"
+            elif otype == "answer":
+                qid = obj.get("question", {}).get("id", "")
+                link = f"https://www.zhihu.com/question/{qid}/answer/{obj['id']}"
+            else:
+                link = obj.get("url", "")
+
+            author = ""
+            if isinstance(obj.get("author"), dict):
+                author = re.sub(r"<[^>]+>", "", obj["author"].get("name", ""))
+
+            entry = {
+                "title": title,
+                "type": otype,
+                "link": link,
+                "author": author,
+                "excerpt": excerpt[:300],
+                "upvotes": obj.get("voteup_count", 0),
+                "comment_count": obj.get("comment_count", 0),
+            }
+            results.append(entry)
+            if len(results) >= count:
+                break
 
         return results
 
