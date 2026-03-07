@@ -4,7 +4,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 
 @dataclass
@@ -34,7 +34,7 @@ class Config:
     cookies_path: str = "cookies.json"
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "Config":
+    def from_file(cls, path: Union[str, Path]) -> "Config":
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {path}")

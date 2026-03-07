@@ -1,0 +1,13 @@
+{
+  "browser": {
+    "headless": true,
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "user_data_dir": "./zhihu-profile",
+    "stealth_level": "advanced",
+    "chrome_cookie_extraction": true
+  },
+  "cookies_path": "cookies.json"
+}
