@@ -19,6 +19,16 @@
 | `check_login_status` | 完善的登录状态检查 |
 | `delete_cookies` | 重置登录状态 |
 
+## OpenClaw Skills
+
+预置的高级技能，供 OpenClaw 等 AI Agent 平台调用：
+
+| Skill | 说明 |
+|-------|------|
+| [research-on-zhihu](skills/research-on-zhihu/SKILL.md) | 知乎话题研究 — 搜索 + 阅读高赞回答 + 分析评论 → 输出研究报告 |
+| [analyze-zhihu-question](skills/analyze-zhihu-question/SKILL.md) | 知乎问题深度分析 — 获取问题详情 + 逐个阅读回答 → 输出观点分布 |
+| [track-zhihu-user](skills/track-zhihu-user/SKILL.md) | 知乎用户追踪 — 用户资料 + 动态抓取 → 输出用户画像和动态报告 |
+
 ## 快速开始
 
 ### 1. 安装依赖
@@ -81,8 +91,12 @@ zhihu-mcp/
 ├── browser/
 │   ├── manager.py           # 浏览器生命周期管理
 │   └── stealth.py           # 反检测 JS 脚本
-└── cookies/
-    └── manager.py           # Cookie 管理与提取
+├── cookies/
+│   └── manager.py           # Cookie 管理与提取
+└── skills/
+    ├── research-on-zhihu/   # 知乎话题研究
+    ├── analyze-zhihu-question/ # 知乎问题深度分析
+    └── track-zhihu-user/    # 知乎用户追踪
 ```
 
 ## 技术栈
