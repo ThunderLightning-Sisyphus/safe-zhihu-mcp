@@ -80,6 +80,7 @@ class BrowserManager:
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--window-size=1920,1080",
+                "--proxy-bypass-list=*.zhihu.com,zhihu.com,*.zhimg.com",
             ],
             user_data_dir=str(user_data_dir),
             viewport={
@@ -100,6 +101,7 @@ class BrowserManager:
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--window-size=1920,1080",
+                "--proxy-bypass-list=*.zhihu.com,zhihu.com,*.zhimg.com",
             ],
             ignore_default_args=["--enable-automation"],
         )

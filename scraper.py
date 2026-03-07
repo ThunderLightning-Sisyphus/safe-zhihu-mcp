@@ -230,21 +230,41 @@ class ZhihuScraper:
         sort_param = sort_map.get(sort, "default")
         url = f"https://www.zhihu.com/search?type=content&q={keyword}&sort={sort_param}"
 
-        await self._navigate(url)
+        # Search is a SPA page — navigate and wait for results to render
+        try:
+            await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except PlaywrightTimeout:
+            pass
+        try:
+            await self.page.wait_for_selector('.SearchResult-Card', timeout=15000)
+        except PlaywrightTimeout:
+            logger.warning("Search results did not appear in time")
+        await asyncio.sleep(1)
 
         results = await self.page.evaluate("""
             (maxCount) => {
                 const results = [];
-                const items = document.querySelectorAll('.List-item, .SearchResult-Card, .ContentItem');
+                const items = document.querySelectorAll('.SearchResult-Card');
 
                 items.forEach((item, i) => {
                     if (i >= maxCount) return;
                     const result = {};
 
-                    const titleEl = item.querySelector('h2 a, .ContentItem-title a, a[href*="/question/"], a[href*="/p/"]');
-                    if (titleEl) {
-                        result.title = titleEl.textContent.trim();
-                        result.link = titleEl.href;
+                    // Find first <a> with zhihu content href
+                    const links = item.querySelectorAll('a[href]');
+                    for (const a of links) {
+                        const href = a.href || '';
+                        if ((href.includes('/question/') || href.includes('/p/') || href.includes('/pub/'))
+                            && a.textContent.trim().length > 2) {
+                            result.title = a.textContent.trim();
+                            result.link = href;
+                            break;
+                        }
+                    }
+                    // Fallback: h2 text without link
+                    if (!result.title) {
+                        const h2 = item.querySelector('h2');
+                        if (h2) result.title = h2.textContent.trim();
                     }
 
                     if (result.link) {
@@ -258,15 +278,20 @@ class ZhihuScraper:
                             result.type = 'other';
                     }
 
-                    const authorEl = item.querySelector('.AuthorInfo-name, .UserLink-link');
-                    if (authorEl) result.author = authorEl.textContent.trim();
+                    // Author: find UserLink-link with non-empty text inside AuthorInfo
+                    const authorLinks = item.querySelectorAll('.AuthorInfo-content .UserLink-link');
+                    for (const a of authorLinks) {
+                        const t = a.textContent.trim();
+                        if (t) { result.author = t; break; }
+                    }
 
                     const excerptEl = item.querySelector('.RichText, .CopyrightRichText-richText');
                     if (excerptEl) result.excerpt = excerptEl.textContent.trim().substring(0, 300);
 
-                    const voteEl = item.querySelector('.VoteButton--up, button[aria-label*="赞同"]');
+                    const voteEl = item.querySelector('button[aria-label*="赞同"]');
                     if (voteEl) {
-                        const m = voteEl.textContent.match(/(\\d+)/);
+                        const aria = voteEl.getAttribute('aria-label') || '';
+                        const m = aria.match(/(\\d+)/);
                         if (m) result.upvotes = parseInt(m[1]);
                     }
 
@@ -311,22 +336,27 @@ class ZhihuScraper:
                 result.topics = Array.from(topicEls).map(el => el.textContent.trim()).filter(t => t);
 
                 const answers = [];
-                const ansItems = document.querySelectorAll('.AnswerItem, .List-item');
+                const ansItems = document.querySelectorAll('.AnswerItem');
                 ansItems.forEach((item, i) => {
                     if (i >= 5) return;
                     const ans = {};
-                    const authorEl = item.querySelector('.AuthorInfo-name a, .UserLink-link');
-                    if (authorEl) ans.author = authorEl.textContent.trim();
+                    // Author: find UserLink-link with text inside AuthorInfo-content
+                    const authorLinks = item.querySelectorAll('.AuthorInfo-content .UserLink-link');
+                    for (const a of authorLinks) {
+                        const t = a.textContent.trim();
+                        if (t) { ans.author = t; break; }
+                    }
                     const contentEl = item.querySelector('.RichContent-inner .RichText');
                     if (contentEl) ans.excerpt = contentEl.textContent.trim().substring(0, 200);
                     const voteEl = item.querySelector('button[aria-label*="赞同"]');
                     if (voteEl) {
-                        const m = voteEl.textContent.match(/(\\d+)/);
+                        const aria = voteEl.getAttribute('aria-label') || '';
+                        const m = aria.match(/(\\d+)/);
                         if (m) ans.upvotes = parseInt(m[1]);
                     }
                     const linkEl = item.querySelector('a[href*="/answer/"]');
                     if (linkEl) {
-                        const m2 = linkEl.href.match(/\\/answer\\/(\\d+)/);
+                        const m2 = linkEl.href.match(/answer\\/(\\d+)/);
                         if (m2) ans.answer_id = m2[1];
                     }
                     if (ans.author || ans.excerpt) answers.push(ans);
@@ -348,11 +378,16 @@ class ZhihuScraper:
         url = f"https://www.zhihu.com/question/{question_id}/answer/{answer_id}"
         await self._navigate(url)
 
+        # Click "展开阅读全文" via JS (standard DOM, not Playwright :has-text)
         try:
-            expand_btn = await self.page.query_selector('button:has-text("展开阅读全文")')
-            if expand_btn:
-                await expand_btn.click()
-                await asyncio.sleep(1)
+            await self.page.evaluate("""
+                (() => {
+                    for (const b of document.querySelectorAll('button')) {
+                        if (b.textContent.includes('展开阅读全文')) { b.click(); break; }
+                    }
+                })()
+            """)
+            await asyncio.sleep(1)
         except Exception:
             pass
 
@@ -363,24 +398,30 @@ class ZhihuScraper:
                 const qTitle = document.querySelector('.QuestionHeader-title');
                 if (qTitle) result.question_title = qTitle.textContent.trim();
 
-                const authorEl = document.querySelector('.AnswerItem .AuthorInfo-name a, .AuthorInfo-name .UserLink-link');
-                if (authorEl) result.author = authorEl.textContent.trim();
+                // Author: find UserLink-link with text inside AuthorInfo-content
+                const authorLinks = document.querySelectorAll('.AuthorInfo-content .UserLink-link');
+                for (const a of authorLinks) {
+                    const t = a.textContent.trim();
+                    if (t) { result.author = t; break; }
+                }
 
-                const headlineEl = document.querySelector('.AuthorInfo-detail .AuthorInfo-badgeText');
+                const headlineEl = document.querySelector('.AuthorInfo-badgeText');
                 if (headlineEl) result.author_headline = headlineEl.textContent.trim();
 
                 const contentEl = document.querySelector('.AnswerItem .RichText, .RichContent-inner .RichText');
                 if (contentEl) result.content = contentEl.textContent.trim();
 
-                const voteEl = document.querySelector('.AnswerItem button[aria-label*="赞同"]');
+                const voteEl = document.querySelector('button[aria-label*="赞同"]');
                 if (voteEl) {
-                    const m = voteEl.textContent.match(/(\\d+)/);
+                    const aria = voteEl.getAttribute('aria-label') || '';
+                    const m = aria.match(/(\\d+)/);
                     if (m) result.upvotes = parseInt(m[1]);
                 }
-                const commentEl = document.querySelector('button:has-text("条评论")');
-                if (commentEl) {
-                    const m = commentEl.textContent.match(/(\\d+)/);
-                    if (m) result.comment_count = parseInt(m[1]);
+                for (const b of document.querySelectorAll('button')) {
+                    if (b.textContent.includes('条评论')) {
+                        const m = b.textContent.match(/(\\d+)/);
+                        if (m) { result.comment_count = parseInt(m[1]); break; }
+                    }
                 }
 
                 const timeEl = document.querySelector('.ContentItem-time span, .ContentItem-time');
@@ -422,10 +463,11 @@ class ZhihuScraper:
                     if (m) result.upvotes = parseInt(m[1]);
                 }
 
-                const commentEl = document.querySelector('button:has-text("条评论")');
-                if (commentEl) {
-                    const m = commentEl.textContent.match(/(\\d+)/);
-                    if (m) result.comment_count = parseInt(m[1]);
+                for (const b of document.querySelectorAll('button')) {
+                    if (b.textContent.includes('条评论')) {
+                        const m = b.textContent.match(/(\\d+)/);
+                        if (m) { result.comment_count = parseInt(m[1]); break; }
+                    }
                 }
 
                 const timeEl = document.querySelector('.ContentItem-time, .Post-Header time, time');
@@ -453,56 +495,61 @@ class ZhihuScraper:
         if not current or not current.startswith(url[:40]):
             await self._navigate(url)
 
-        # Open comment section
+        # Open comment section via JS (standard DOM, not Playwright :has-text)
         try:
-            comment_btn = await self.page.query_selector(
-                'button:has-text("条评论"), button:has-text("添加评论"), button[aria-label*="评论"]'
-            )
-            if comment_btn:
-                await comment_btn.click()
-                await asyncio.sleep(2)
+            await self.page.evaluate("""
+                (() => {
+                    for (const b of document.querySelectorAll('button')) {
+                        if (b.textContent.includes('评论')) { b.click(); break; }
+                    }
+                })()
+            """)
+            await asyncio.sleep(2)
         except Exception:
             pass
 
         try:
-            await self.page.wait_for_selector('.CommentItem, [class*="CommentItem"]', timeout=5000)
+            await self.page.wait_for_selector('.CommentContent, .CommentItem', timeout=5000)
         except PlaywrightTimeout:
             pass
+        await asyncio.sleep(1)
 
         return await self.page.evaluate("""
             (maxCount) => {
                 const results = [];
-                const items = document.querySelectorAll('.CommentItem, [class*="CommentItemV2"]');
+                // Find comment containers: .CommentContent is the modern class
+                const items = document.querySelectorAll('.CommentContent, .CommentItem');
 
                 items.forEach((item, i) => {
                     if (i >= maxCount) return;
                     const comment = {};
 
-                    const authorEl = item.querySelector('.CommentItem-authorName, a[class*="UserLink"]');
+                    // Author: look for UserLink inside this comment
+                    const authorEl = item.querySelector('a.UserLink-link, [class*="UserLink"]');
                     if (authorEl) comment.author = authorEl.textContent.trim();
 
-                    const contentEl = item.querySelector('.CommentItem-content, [class*="RichText"]');
-                    if (contentEl) comment.content = contentEl.textContent.trim();
+                    // Content: the comment text itself
+                    const contentEl = item.querySelector('.RichText, [class*="RichText"]');
+                    if (contentEl) {
+                        comment.content = contentEl.textContent.trim();
+                    } else {
+                        // Fallback: get direct text content (skip author name)
+                        const text = item.textContent.trim();
+                        if (text.length > 5 && text !== comment.author) {
+                            comment.content = text.substring(0, 500);
+                        }
+                    }
 
-                    const timeEl = item.querySelector('.CommentItem-time, time');
+                    // Time
+                    const timeEl = item.querySelector('time, [class*="time"], [class*="Time"]');
                     if (timeEl) comment.time = timeEl.textContent.trim();
 
-                    const likeEl = item.querySelector('.CommentItem-likeBtn, button[class*="like"]');
+                    // Likes
+                    const likeEl = item.querySelector('button[class*="like"], [class*="Like"]');
                     if (likeEl) {
                         const m = likeEl.textContent.match(/(\\d+)/);
                         if (m) comment.likes = parseInt(m[1]);
                     }
-
-                    const replies = [];
-                    item.querySelectorAll('.CommentItem .CommentItem, [class*="childComment"]').forEach(reply => {
-                        const r = {};
-                        const rAuthor = reply.querySelector('a[class*="UserLink"]');
-                        if (rAuthor) r.author = rAuthor.textContent.trim();
-                        const rContent = reply.querySelector('[class*="RichText"]');
-                        if (rContent) r.content = rContent.textContent.trim();
-                        if (r.content) replies.push(r);
-                    });
-                    if (replies.length > 0) comment.replies = replies;
 
                     if (comment.content) results.push(comment);
                 });
