@@ -371,6 +371,15 @@ zhihu-mcp 是 zhihu_monitor 的升级版，增加了搜索、内容详情、评�
 - **[FastMCP (mcp)](https://github.com/jlowin/fastmcp)** — MCP 协议服务器框架
 - **SQLite** — 本地数据持久化
 
+## 致谢
+
+本项目的开发受到以下开源项目的启发：
+
+- **[xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp)** by [@xpzouying](https://github.com/xpzouying) — 小红书 MCP 服务器。本项目的架构设计、MCP 工具组织方式和 OpenClaw Skills 格式均参考了该项目。
+- **[zhihu_monitor](https://github.com/shural/zhihu_monitor)** by [@shural](https://github.com/shural) — 知乎用户动态监控工具。本项目的知乎 stealth 反检测策略、DOM 选择器和 Cookie 管理逻辑源自该项目。
+
+感谢这两个项目的作者和贡献者们的优秀工作。
+
 ## License
 
-MIT
+[MIT](LICENSE)
