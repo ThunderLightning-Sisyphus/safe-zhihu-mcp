@@ -5,6 +5,9 @@ zhihu_activities.db
 zhihu-profile/
 mcp_server.log
 
+# Tests (debug scripts)
+tests/
+
 # Python
 __pycache__/
 *.pyc

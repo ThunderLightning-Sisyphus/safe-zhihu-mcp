@@ -328,8 +328,8 @@ class ZhihuScraper:
 
                 const ansCountEl = document.querySelector('.List-headerText span, h4.List-headerText');
                 if (ansCountEl) {
-                    const m = ansCountEl.textContent.match(/(\\d+)/);
-                    if (m) result.answer_count = parseInt(m[1]);
+                    const m = ansCountEl.textContent.match(/([\\d,]+)/);
+                    if (m) result.answer_count = parseInt(m[1].replace(/,/g, ''));
                 }
 
                 const topicEls = document.querySelectorAll('.TopicLink .Popover div, .Tag-content');
@@ -417,7 +417,8 @@ class ZhihuScraper:
                     const m = aria.match(/(\\d+)/);
                     if (m) result.upvotes = parseInt(m[1]);
                 }
-                for (const b of document.querySelectorAll('button')) {
+                // Find comment count for the answer (skip question-level comment button in QuestionHeader)
+                for (const b of document.querySelectorAll('.ContentItem-actions button')) {
                     if (b.textContent.includes('条评论')) {
                         const m = b.textContent.match(/(\\d+)/);
                         if (m) { result.comment_count = parseInt(m[1]); break; }
@@ -492,15 +493,20 @@ class ZhihuScraper:
             count: Max top-level comments to load
         """
         current = self.page.url
-        if not current or not current.startswith(url[:40]):
+        if not current or current.split('?')[0] != url.split('?')[0]:
             await self._navigate(url)
 
-        # Open comment section via JS (standard DOM, not Playwright :has-text)
+        # Open comment section via JS — click the answer's comment button, not the question's
         try:
             await self.page.evaluate("""
                 (() => {
+                    // First try answer-level comment button (inside ContentItem-actions)
+                    for (const b of document.querySelectorAll('.ContentItem-actions button')) {
+                        if (b.textContent.includes('评论')) { b.click(); return; }
+                    }
+                    // Fallback: any comment button (for articles etc)
                     for (const b of document.querySelectorAll('button')) {
-                        if (b.textContent.includes('评论')) { b.click(); break; }
+                        if (b.textContent.includes('评论')) { b.click(); return; }
                     }
                 })()
             """)
@@ -517,38 +523,24 @@ class ZhihuScraper:
         return await self.page.evaluate("""
             (maxCount) => {
                 const results = [];
-                // Find comment containers: .CommentContent is the modern class
-                const items = document.querySelectorAll('.CommentContent, .CommentItem');
+                // .CommentContent holds the comment text; author is in a sibling element
+                const items = document.querySelectorAll('.CommentContent');
 
                 items.forEach((item, i) => {
                     if (i >= maxCount) return;
                     const comment = {};
 
-                    // Author: look for UserLink inside this comment
-                    const authorEl = item.querySelector('a.UserLink-link, [class*="UserLink"]');
-                    if (authorEl) comment.author = authorEl.textContent.trim();
-
-                    // Content: the comment text itself
-                    const contentEl = item.querySelector('.RichText, [class*="RichText"]');
-                    if (contentEl) {
-                        comment.content = contentEl.textContent.trim();
-                    } else {
-                        // Fallback: get direct text content (skip author name)
-                        const text = item.textContent.trim();
-                        if (text.length > 5 && text !== comment.author) {
-                            comment.content = text.substring(0, 500);
-                        }
+                    // Content: text of the CommentContent element itself
+                    const text = item.textContent.trim();
+                    if (text) {
+                        comment.content = text.substring(0, 500);
                     }
 
-                    // Time
-                    const timeEl = item.querySelector('time, [class*="time"], [class*="Time"]');
-                    if (timeEl) comment.time = timeEl.textContent.trim();
-
-                    // Likes
-                    const likeEl = item.querySelector('button[class*="like"], [class*="Like"]');
-                    if (likeEl) {
-                        const m = likeEl.textContent.match(/(\\d+)/);
-                        if (m) comment.likes = parseInt(m[1]);
+                    // Author: go to parent container, find the people link
+                    const container = item.parentElement;
+                    if (container) {
+                        const authorEl = container.querySelector('a[href*="/people/"]');
+                        if (authorEl) comment.author = authorEl.textContent.trim();
                     }
 
                     if (comment.content) results.push(comment);

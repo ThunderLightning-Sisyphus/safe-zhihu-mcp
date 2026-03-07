@@ -4,121 +4,39 @@
 
 构建一个知乎 MCP (Model Context Protocol) 服务器，使 AI Agent 能够与知乎网站交互——搜索内容、查看详情与评论、抓取用户动态、查询存储数据等。
 
-## 架构设计
+## 架构参考
 
-参考两个已有项目：
+- **xiaohongshu-mcp**（Go）— 架构模式：浏览器生命周期、cookie 管理、MCP 工具设计
+- **zhihu_monitor**（Python）— 知乎特定逻辑：stealth 反检测、安全验证处理、DOM 提取
 
-- **xiaohongshu-mcp**（Go）— 提供架构模式：浏览器生命周期、cookie 管理、MCP 工具设计（13 个工具覆盖认证/浏览/搜索/互动/发布）
-- **zhihu_monitor**（Python）— 提供知乎特定逻辑：stealth 反检测、安全验证处理、DOM 提取
+## 浏览器后端
 
-### 系统架构
+支持两种浏览器后端：
 
-```
-┌─────────────┐     MCP/stdio      ┌──────────────┐    Playwright     ┌──────────────┐
-│   AI Agent   │◄──────────────────►│  mcp_server  │◄────────────────►│   Chromium    │
-│              │                    │    .py       │   / Pinchtab     │  (headless)   │
-└─────────────┘                    └──────┬───────┘                  └──────┬───────┘
-                                          │                                 │
-                                          ▼                                 ▼
-                                   ┌──────────────┐                  ┌──────────────┐
-                                   │   SQLite DB   │                  │  zhihu.com   │
-                                   │  (activities) │                  │              │
-                                   └──────────────┘                  └──────────────┘
-```
+1. **Playwright**（主要）— 直接通过 Playwright 驱动 Chromium，注入 stealth 脚本反检测
+2. **Pinchtab**（备用）— 通过 HTTP API 连接 Pinchtab 管理的浏览器实例
 
-## MCP 工具清单
+当前已验证 Playwright + stealth 模式在 headless 下可正常工作。
 
-### 已实现
+## 知乎 DOM 选择器（已验证）
 
-| 工具 | 说明 |
-|------|------|
-| `get_activities` | 实时爬取指定用户的活动动态 |
-| `get_new_since` | 查询数据库中最近 N 小时的活动 |
-| `get_db_stats` | 数据库统计（总数/作者数/最后入库时间） |
-| `cookie_status` | 检查 cookie 和登录状态 |
+| 元素 | 选择器 | 备注 |
+|------|--------|------|
+| 问题标题 | `.QuestionHeader-title` | |
+| 回答作者 | `.AuthorInfo-content .UserLink-link` | 需跳过空头像链接 |
+| 点赞数 | `button[aria-label*="赞同"]` | 解析 `aria-label` 属性，非 textContent |
+| 评论数 | `.ContentItem-actions button` 含 "条评论" | 跳过 `QuestionHeader-Comment` 内的问题级按钮 |
+| 评论内容 | `.CommentContent` | 文本直接在元素内 |
+| 评论作者 | 父元素内 `a[href*="/people/"]` | 作者在 CommentContent 的兄弟元素中 |
+| 回答数 | `.List-headerText` | 数字可能含逗号（`1,003`） |
+| 关注数/浏览数 | `.NumberBoard-itemValue` | 第 1 个=关注，第 2 个=浏览 |
+| 话题 | `.TopicLink .Popover div, .Tag-content` | |
+| 回答列表 | `.AnswerItem` | 首屏约 5 条，更多需滚动加载 |
+| 回答链接 | `.ContentItem-time a[href*="/answer/"]` | 从 href 提取 answer_id |
 
-### P2.1 — 内容搜索与浏览
+## 注意事项
 
-| 工具 | 说明 |
-|------|------|
-| `search_content` | 按关键词搜索知乎（问题/文章/回答），支持排序（相关/最新/点赞）和类型过滤 |
-| `get_question_detail` | 获取问题详情：标题、描述、回答数、关注数 |
-| `get_answer_detail` | 获取回答详情：完整正文、作者、点赞数、评论数 |
-| `get_article_detail` | 获取专栏文章详情：完整正文、作者、点赞数 |
-
-### P2.2 — 评论系统
-
-| 工具 | 说明 |
-|------|------|
-| `get_comments` | 获取回答/文章评论列表，支持分页和嵌套回复展开 |
-| `post_comment` | 对回答/文章发表评论 |
-| `reply_comment` | 回复已有评论 |
-
-### P2.3 — 用户信息
-
-| 工具 | 说明 |
-|------|------|
-| `user_profile` | 获取用户主页：简介、关注/粉丝/获赞数、回答列表 |
-
-### P2.4 — 认证管理
-
-| 工具 | 说明 |
-|------|------|
-| `check_login_status` | 完善的登录状态检查（已登录/未登录/cookie过期） |
-| `delete_cookies` | 重置登录状态，删除 cookie 文件 |
-
-### P3 — 远期
-
-| 工具 | 说明 |
-|------|------|
-| 二维码/手机号登录 | 知乎登录流程设计 |
-| `like_answer` / `unlike_answer` | 点赞/取消点赞 |
-| `favorite_content` / `unfavorite_content` | 收藏/取消收藏 |
-| 内容发布 | 发布回答/文章 |
-| `monitor.py` | 定时后台监控 |
-
-## 已完成模块
-
-| 模块 | 文件 | 说明 |
-|------|------|------|
-| 浏览器管理 | `browser/manager.py` | Playwright 生命周期，persistent/non-persistent，cookie 加载/保存，session 预热，安全验证 |
-| 反检测注入 | `browser/stealth.py` | 两级 JS 注入：基础 + 进阶（Canvas 噪声、WebGL 欺骗、硬件伪装） |
-| 配置管理 | `config.py` | BrowserConfig / Config 数据类，JSON/环境变量/默认值，Pinchtab 配置 |
-| 异常定义 | `errors.py` | ZhihuMCPError 及子类 |
-| Cookie 管理 | `cookies/manager.py` | CookieManager + ChromeCookieExtractor（pycookiecheat/rookiepy） |
-| 数据存储 | `storage.py` | SQLite 活动去重、CRUD、统计 |
-| 网页爬取 | `scraper.py` | 知乎活动页 DOM 提取，中文时间解析 |
-| MCP Server | `mcp_server.py` | FastMCP 服务器，4 个工具 + 2 个资源 |
-| Pinchtab 后端 | `pinchtab_client.py` | HTTP API 替代 Playwright 的浏览器后端 |
-
-## 目标文件结构
-
-```
-zhihu-mcp/
-├── PLAN.md                  # 项目规划
-├── TODO.md                  # 任务追踪
-├── requirements.txt         # Python 依赖
-├── config.py                # 配置管理
-├── config.json.example      # 配置示例
-├── errors.py                # 自定义异常
-├── mcp_server.py            # MCP 服务器入口
-├── scraper.py               # 知乎页面 DOM 提取
-├── storage.py               # SQLite 数据层
-├── pinchtab_client.py       # Pinchtab HTTP 后端
-├── browser/
-│   ├── __init__.py
-│   ├── manager.py           # 浏览器生命周期管理
-│   └── stealth.py           # 反检测 JS 脚本
-└── cookies/
-    ├── __init__.py
-    └── manager.py           # Cookie 管理与提取
-```
-
-## 技术栈
-
-- **Python 3.9+**
-- **Playwright** — 浏览器自动化
-- **FastMCP (mcp)** — MCP 协议服务器
-- **pycookiecheat / rookiepy** — Chrome cookie 提取
-- **aiohttp** — Pinchtab HTTP 客户端
-- **SQLite** — 本地数据持久化
+- Zhihu 的 CSS 类名部分使用 CSS Modules（如 `css-14nvvry`），这些不稳定，应避免依赖
+- 回答页面会同时显示多个回答，选择器需注意作用域（第一个 `.ContentItem` 是目标回答）
+- `page.evaluate()` 中只能用标准 CSS/JS，不能用 Playwright 伪选择器（`:has-text()` 等）
+- 搜索页是 SPA 渲染，`wait_for_selector` 时机不稳定
