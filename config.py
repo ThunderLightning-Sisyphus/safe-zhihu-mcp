@@ -26,6 +26,9 @@ class BrowserConfig:
     login_timeout_seconds: int = 120
     chrome_cookie_extraction: bool = True
     stealth_level: str = "advanced"  # "light" or "advanced"
+    use_pinchtab: bool = False
+    pinchtab_url: str = "http://127.0.0.1:9877"
+    pinchtab_profile: str = "zhihu"
 
 
 @dataclass
@@ -57,6 +60,9 @@ class Config:
             login_timeout_seconds=browser_data.get("login_timeout_seconds", 120),
             chrome_cookie_extraction=browser_data.get("chrome_cookie_extraction", True),
             stealth_level=browser_data.get("stealth_level", "advanced"),
+            use_pinchtab=browser_data.get("use_pinchtab", False),
+            pinchtab_url=browser_data.get("pinchtab_url", "http://127.0.0.1:9877"),
+            pinchtab_profile=browser_data.get("pinchtab_profile", "zhihu"),
         )
         return cls(
             browser=browser,

@@ -61,12 +61,26 @@ class _State:
         if self._initialized:
             return self._scraper
 
-        from browser import BrowserManager
-        from config import BrowserConfig, load_config
-        from scraper import ZhihuScraper
+        from config import load_config
 
         app_config = load_config()
         is_headless = os.environ.get("HEADLESS", "true").lower() == "true"
+
+        if app_config.browser.use_pinchtab:
+            from pinchtab_client import PinchtabScraper
+
+            self._scraper = PinchtabScraper(
+                app_config.browser.pinchtab_url,
+                app_config.browser.pinchtab_profile,
+                headless=is_headless,
+            )
+            self._initialized = True
+            logger.info("Pinchtab scraper initialized for MCP server")
+            return self._scraper
+
+        from browser import BrowserManager
+        from config import BrowserConfig
+        from scraper import ZhihuScraper
 
         config = BrowserConfig(
             headless=is_headless,
@@ -81,7 +95,7 @@ class _State:
         await self._browser.warmup_session(page)
         self._scraper = ZhihuScraper(page)
         self._initialized = True
-        logger.info("Browser initialized for MCP server")
+        logger.info("Playwright browser initialized for MCP server")
         return self._scraper
 
     async def save_cookies(self):
@@ -222,13 +236,19 @@ async def cookie_status() -> str:
 
     try:
         scraper = await state.ensure_browser()
-        await scraper.page.goto(
-            "https://www.zhihu.com", wait_until="networkidle", timeout=30000
-        )
-        title = await scraper.page.title()
-        result["login_verified"] = "私信" in title or "消息" in title
-        result["page_title"] = title
-        await state.save_cookies()
+        if hasattr(scraper, "page") and scraper.page:
+            # Playwright path: can visit page directly
+            await scraper.page.goto(
+                "https://www.zhihu.com", wait_until="networkidle", timeout=30000
+            )
+            title = await scraper.page.title()
+            result["login_verified"] = "私信" in title or "消息" in title
+            result["page_title"] = title
+            await state.save_cookies()
+        else:
+            # Pinchtab path: cookie file check only
+            result["backend"] = "pinchtab"
+            result["login_verified"] = bool(mgr.load())
     except Exception as e:
         result["login_error"] = str(e)
 

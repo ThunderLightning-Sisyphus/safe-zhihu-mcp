@@ -7,7 +7,10 @@
     },
     "user_data_dir": "./zhihu-profile",
     "stealth_level": "advanced",
-    "chrome_cookie_extraction": true
+    "chrome_cookie_extraction": true,
+    "use_pinchtab": false,
+    "pinchtab_url": "http://127.0.0.1:9877",
+    "pinchtab_profile": "zhihu"
   },
   "cookies_path": "cookies.json"
 }

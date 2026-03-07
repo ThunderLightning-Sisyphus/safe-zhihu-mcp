@@ -18,5 +18,5 @@
 
 ## P2 - 扩展功能
 
+- [x] Pinchtab 集成 (`pinchtab_client.py`)
 - [ ] 定时监控 (`monitor.py`)
-- [ ] Pinchtab 集成 (`pinchtab_client.py`)
