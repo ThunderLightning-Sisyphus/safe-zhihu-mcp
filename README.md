@@ -27,6 +27,7 @@
 |-------|------|
 | [research-on-zhihu](skills/research-on-zhihu/SKILL.md) | 知乎话题研究 — 搜索 + 阅读高赞回答 + 分析评论 → 输出研究报告 |
 | [analyze-zhihu-question](skills/analyze-zhihu-question/SKILL.md) | 知乎问题深度分析 — 获取问题详情 + 逐个阅读回答 → 输出观点分布 |
+| [analyze-zhihu-answer](skills/analyze-zhihu-answer/SKILL.md) | 知乎回答深度分析 — 回答全文 + 评论区讨论 → 输出观点和评论区反馈 |
 | [track-zhihu-user](skills/track-zhihu-user/SKILL.md) | 知乎用户追踪 — 用户资料 + 动态抓取 → 输出用户画像和动态报告 |
 
 ## 快速开始
@@ -96,6 +97,7 @@ zhihu-mcp/
 └── skills/
     ├── research-on-zhihu/   # 知乎话题研究
     ├── analyze-zhihu-question/ # 知乎问题深度分析
+    ├── analyze-zhihu-answer/   # 知乎回答深度分析
     └── track-zhihu-user/    # 知乎用户追踪
 ```
 
