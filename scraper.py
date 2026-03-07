@@ -1,11 +1,11 @@
-"""Zhihu activity scraper — DOM extraction from user profile pages."""
+"""Zhihu scraper — DOM extraction for activities, search, detail, comments, profiles."""
 
 import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
@@ -210,3 +210,383 @@ class ZhihuScraper:
                 pass
 
         return now
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    async def search(
+        self, keyword: str, sort: str = "relevance", content_type: str = "all", count: int = 10
+    ) -> List[dict]:
+        """Search Zhihu content by keyword.
+
+        Args:
+            keyword: Search query
+            sort: "relevance", "newest", or "most_upvoted"
+            content_type: "all", "question", "article", "answer"
+            count: Max results to return
+        """
+        sort_map = {"relevance": "default", "newest": "created_time", "most_upvoted": "upvoted_count"}
+        sort_param = sort_map.get(sort, "default")
+        url = f"https://www.zhihu.com/search?type=content&q={keyword}&sort={sort_param}"
+
+        await self._navigate(url)
+
+        results = await self.page.evaluate("""
+            (maxCount) => {
+                const results = [];
+                const items = document.querySelectorAll('.List-item, .SearchResult-Card, .ContentItem');
+
+                items.forEach((item, i) => {
+                    if (i >= maxCount) return;
+                    const result = {};
+
+                    const titleEl = item.querySelector('h2 a, .ContentItem-title a, a[href*="/question/"], a[href*="/p/"]');
+                    if (titleEl) {
+                        result.title = titleEl.textContent.trim();
+                        result.link = titleEl.href;
+                    }
+
+                    if (result.link) {
+                        if (result.link.includes('/question/') && result.link.includes('/answer/'))
+                            result.type = 'answer';
+                        else if (result.link.includes('/question/'))
+                            result.type = 'question';
+                        else if (result.link.includes('/p/') || result.link.includes('/article/'))
+                            result.type = 'article';
+                        else
+                            result.type = 'other';
+                    }
+
+                    const authorEl = item.querySelector('.AuthorInfo-name, .UserLink-link');
+                    if (authorEl) result.author = authorEl.textContent.trim();
+
+                    const excerptEl = item.querySelector('.RichText, .CopyrightRichText-richText');
+                    if (excerptEl) result.excerpt = excerptEl.textContent.trim().substring(0, 300);
+
+                    const voteEl = item.querySelector('.VoteButton--up, button[aria-label*="赞同"]');
+                    if (voteEl) {
+                        const m = voteEl.textContent.match(/(\\d+)/);
+                        if (m) result.upvotes = parseInt(m[1]);
+                    }
+
+                    if (result.title) results.push(result);
+                });
+                return results;
+            }
+        """, count)
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Question detail
+    # ------------------------------------------------------------------
+
+    async def get_question_detail(self, question_id: str) -> dict:
+        """Get question detail: title, description, answer count, follower count."""
+        url = f"https://www.zhihu.com/question/{question_id}"
+        await self._navigate(url)
+
+        return await self.page.evaluate("""
+            () => {
+                const result = {};
+
+                const titleEl = document.querySelector('.QuestionHeader-title, h1[class*="QuestionHeader"]');
+                if (titleEl) result.title = titleEl.textContent.trim();
+
+                const descEl = document.querySelector('.QuestionRichText, .QuestionHeader-detail .RichText');
+                if (descEl) result.description = descEl.textContent.trim();
+
+                const metaEls = document.querySelectorAll('.NumberBoard-itemValue');
+                if (metaEls.length >= 1) result.followers = metaEls[0]?.textContent?.trim();
+                if (metaEls.length >= 2) result.views = metaEls[1]?.textContent?.trim();
+
+                const ansCountEl = document.querySelector('.List-headerText span, h4.List-headerText');
+                if (ansCountEl) {
+                    const m = ansCountEl.textContent.match(/(\\d+)/);
+                    if (m) result.answer_count = parseInt(m[1]);
+                }
+
+                const topicEls = document.querySelectorAll('.TopicLink .Popover div, .Tag-content');
+                result.topics = Array.from(topicEls).map(el => el.textContent.trim()).filter(t => t);
+
+                const answers = [];
+                const ansItems = document.querySelectorAll('.AnswerItem, .List-item');
+                ansItems.forEach((item, i) => {
+                    if (i >= 5) return;
+                    const ans = {};
+                    const authorEl = item.querySelector('.AuthorInfo-name a, .UserLink-link');
+                    if (authorEl) ans.author = authorEl.textContent.trim();
+                    const contentEl = item.querySelector('.RichContent-inner .RichText');
+                    if (contentEl) ans.excerpt = contentEl.textContent.trim().substring(0, 200);
+                    const voteEl = item.querySelector('button[aria-label*="赞同"]');
+                    if (voteEl) {
+                        const m = voteEl.textContent.match(/(\\d+)/);
+                        if (m) ans.upvotes = parseInt(m[1]);
+                    }
+                    const linkEl = item.querySelector('a[href*="/answer/"]');
+                    if (linkEl) {
+                        const m2 = linkEl.href.match(/\\/answer\\/(\\d+)/);
+                        if (m2) ans.answer_id = m2[1];
+                    }
+                    if (ans.author || ans.excerpt) answers.push(ans);
+                });
+                result.answers = answers;
+                result.question_id = window.location.pathname.match(/\\/question\\/(\\d+)/)?.[1] || '';
+                result.url = window.location.href;
+
+                return result;
+            }
+        """)
+
+    # ------------------------------------------------------------------
+    # Answer detail
+    # ------------------------------------------------------------------
+
+    async def get_answer_detail(self, question_id: str, answer_id: str) -> dict:
+        """Get a specific answer's full content."""
+        url = f"https://www.zhihu.com/question/{question_id}/answer/{answer_id}"
+        await self._navigate(url)
+
+        try:
+            expand_btn = await self.page.query_selector('button:has-text("展开阅读全文")')
+            if expand_btn:
+                await expand_btn.click()
+                await asyncio.sleep(1)
+        except Exception:
+            pass
+
+        return await self.page.evaluate("""
+            () => {
+                const result = {};
+
+                const qTitle = document.querySelector('.QuestionHeader-title');
+                if (qTitle) result.question_title = qTitle.textContent.trim();
+
+                const authorEl = document.querySelector('.AnswerItem .AuthorInfo-name a, .AuthorInfo-name .UserLink-link');
+                if (authorEl) result.author = authorEl.textContent.trim();
+
+                const headlineEl = document.querySelector('.AuthorInfo-detail .AuthorInfo-badgeText');
+                if (headlineEl) result.author_headline = headlineEl.textContent.trim();
+
+                const contentEl = document.querySelector('.AnswerItem .RichText, .RichContent-inner .RichText');
+                if (contentEl) result.content = contentEl.textContent.trim();
+
+                const voteEl = document.querySelector('.AnswerItem button[aria-label*="赞同"]');
+                if (voteEl) {
+                    const m = voteEl.textContent.match(/(\\d+)/);
+                    if (m) result.upvotes = parseInt(m[1]);
+                }
+                const commentEl = document.querySelector('button:has-text("条评论")');
+                if (commentEl) {
+                    const m = commentEl.textContent.match(/(\\d+)/);
+                    if (m) result.comment_count = parseInt(m[1]);
+                }
+
+                const timeEl = document.querySelector('.ContentItem-time span, .ContentItem-time');
+                if (timeEl) result.created_time = timeEl.textContent.trim();
+
+                result.question_id = window.location.pathname.match(/\\/question\\/(\\d+)/)?.[1] || '';
+                result.answer_id = window.location.pathname.match(/\\/answer\\/(\\d+)/)?.[1] || '';
+                result.url = window.location.href;
+
+                return result;
+            }
+        """)
+
+    # ------------------------------------------------------------------
+    # Article detail
+    # ------------------------------------------------------------------
+
+    async def get_article_detail(self, article_id: str) -> dict:
+        """Get a Zhihu zhuanlan article's full content."""
+        url = f"https://zhuanlan.zhihu.com/p/{article_id}"
+        await self._navigate(url)
+
+        return await self.page.evaluate("""
+            () => {
+                const result = {};
+
+                const titleEl = document.querySelector('.Post-Title, h1.Post-Title');
+                if (titleEl) result.title = titleEl.textContent.trim();
+
+                const authorEl = document.querySelector('.AuthorInfo-name a, .UserLink-link');
+                if (authorEl) result.author = authorEl.textContent.trim();
+
+                const contentEl = document.querySelector('.Post-RichTextContainer .RichText, .RichText.ztext.Post-RichText');
+                if (contentEl) result.content = contentEl.textContent.trim();
+
+                const voteEl = document.querySelector('button[aria-label*="赞同"], .LikeButton');
+                if (voteEl) {
+                    const m = voteEl.textContent.match(/(\\d+)/);
+                    if (m) result.upvotes = parseInt(m[1]);
+                }
+
+                const commentEl = document.querySelector('button:has-text("条评论")');
+                if (commentEl) {
+                    const m = commentEl.textContent.match(/(\\d+)/);
+                    if (m) result.comment_count = parseInt(m[1]);
+                }
+
+                const timeEl = document.querySelector('.ContentItem-time, .Post-Header time, time');
+                if (timeEl) result.created_time = timeEl.textContent.trim();
+
+                result.article_id = window.location.pathname.match(/\\/p\\/(\\d+)/)?.[1] || '';
+                result.url = window.location.href;
+
+                return result;
+            }
+        """)
+
+    # ------------------------------------------------------------------
+    # Comments
+    # ------------------------------------------------------------------
+
+    async def get_comments(self, url: str, count: int = 20) -> List[dict]:
+        """Get comments for a content page.
+
+        Args:
+            url: Full URL to the content page
+            count: Max top-level comments to load
+        """
+        current = self.page.url
+        if not current or not current.startswith(url[:40]):
+            await self._navigate(url)
+
+        # Open comment section
+        try:
+            comment_btn = await self.page.query_selector(
+                'button:has-text("条评论"), button:has-text("添加评论"), button[aria-label*="评论"]'
+            )
+            if comment_btn:
+                await comment_btn.click()
+                await asyncio.sleep(2)
+        except Exception:
+            pass
+
+        try:
+            await self.page.wait_for_selector('.CommentItem, [class*="CommentItem"]', timeout=5000)
+        except PlaywrightTimeout:
+            pass
+
+        return await self.page.evaluate("""
+            (maxCount) => {
+                const results = [];
+                const items = document.querySelectorAll('.CommentItem, [class*="CommentItemV2"]');
+
+                items.forEach((item, i) => {
+                    if (i >= maxCount) return;
+                    const comment = {};
+
+                    const authorEl = item.querySelector('.CommentItem-authorName, a[class*="UserLink"]');
+                    if (authorEl) comment.author = authorEl.textContent.trim();
+
+                    const contentEl = item.querySelector('.CommentItem-content, [class*="RichText"]');
+                    if (contentEl) comment.content = contentEl.textContent.trim();
+
+                    const timeEl = item.querySelector('.CommentItem-time, time');
+                    if (timeEl) comment.time = timeEl.textContent.trim();
+
+                    const likeEl = item.querySelector('.CommentItem-likeBtn, button[class*="like"]');
+                    if (likeEl) {
+                        const m = likeEl.textContent.match(/(\\d+)/);
+                        if (m) comment.likes = parseInt(m[1]);
+                    }
+
+                    const replies = [];
+                    item.querySelectorAll('.CommentItem .CommentItem, [class*="childComment"]').forEach(reply => {
+                        const r = {};
+                        const rAuthor = reply.querySelector('a[class*="UserLink"]');
+                        if (rAuthor) r.author = rAuthor.textContent.trim();
+                        const rContent = reply.querySelector('[class*="RichText"]');
+                        if (rContent) r.content = rContent.textContent.trim();
+                        if (r.content) replies.push(r);
+                    });
+                    if (replies.length > 0) comment.replies = replies;
+
+                    if (comment.content) results.push(comment);
+                });
+                return results;
+            }
+        """, count)
+
+    # ------------------------------------------------------------------
+    # User profile
+    # ------------------------------------------------------------------
+
+    async def get_user_profile(self, token: str) -> dict:
+        """Get user profile: name, bio, stats, recent items."""
+        url = f"https://www.zhihu.com/people/{token}"
+        await self._navigate(url)
+
+        return await self.page.evaluate("""
+            () => {
+                const result = {};
+
+                const nameEl = document.querySelector('.ProfileHeader-name, .UserProfileHeader-name');
+                if (nameEl) result.name = nameEl.textContent.trim();
+
+                const headlineEl = document.querySelector('.ProfileHeader-headline, .UserProfileHeader-headline');
+                if (headlineEl) result.headline = headlineEl.textContent.trim();
+
+                const bioEl = document.querySelector('.ProfileHeader-detailItem .ProfileHeader-detailValue');
+                if (bioEl) result.bio = bioEl.textContent.trim();
+
+                const statItems = document.querySelectorAll('.NumberBoard-itemValue');
+                const statLabels = document.querySelectorAll('.NumberBoard-itemName');
+                result.stats = {};
+                statItems.forEach((item, i) => {
+                    const label = statLabels[i]?.textContent?.trim() || '';
+                    const value = item.textContent.trim();
+                    if (label) result.stats[label] = value;
+                });
+
+                const items = [];
+                document.querySelectorAll('.List-item, .ContentItem').forEach((item, i) => {
+                    if (i >= 10) return;
+                    const entry = {};
+                    const titleEl = item.querySelector('.ContentItem-title a, h2 a');
+                    if (titleEl) {
+                        entry.title = titleEl.textContent.trim();
+                        entry.link = titleEl.href;
+                    }
+                    const excerptEl = item.querySelector('.RichText');
+                    if (excerptEl) entry.excerpt = excerptEl.textContent.trim().substring(0, 200);
+                    if (entry.title) items.push(entry);
+                });
+                result.recent_items = items;
+
+                result.token = window.location.pathname.match(/\\/people\\/([^/]+)/)?.[1] || '';
+                result.url = window.location.href;
+
+                return result;
+            }
+        """)
+
+    # ------------------------------------------------------------------
+    # Navigation helper
+    # ------------------------------------------------------------------
+
+    async def _navigate(self, url: str) -> None:
+        """Navigate to URL with retry and anti-bot handling."""
+        for attempt in range(3):
+            try:
+                await self.page.goto(url, wait_until="networkidle", timeout=30000)
+            except PlaywrightTimeout:
+                try:
+                    await self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                except PlaywrightTimeout:
+                    if attempt < 2:
+                        await asyncio.sleep(3)
+                        continue
+                    break
+
+            title = await self.page.title()
+            if "unhuman" in self.page.url or "安全验证" in title:
+                if attempt < 2:
+                    await asyncio.sleep(5 + attempt * 5)
+                    continue
+                break
+            return
+
+        await asyncio.sleep(2)

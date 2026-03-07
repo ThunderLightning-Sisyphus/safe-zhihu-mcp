@@ -29,10 +29,14 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP(
     "zhihu-mcp",
     instructions=(
-        "Interact with Zhihu (知乎). Use get_activities to fetch recent posts "
-        "from any Zhihu user by their URL token. Use get_new_since to check the "
-        "database for recently captured activities. Use get_db_stats for an overview. "
-        "Use cookie_status to check login state."
+        "Interact with Zhihu (知乎). Tools: "
+        "search_content — search by keyword; "
+        "get_question_detail / get_answer_detail / get_article_detail — view content; "
+        "get_comments — read comments; "
+        "user_profile — view user info; "
+        "get_activities — fetch user activity feed; "
+        "get_new_since / get_db_stats — query stored data; "
+        "check_login_status / delete_cookies — manage auth."
     ),
 )
 
@@ -253,6 +257,206 @@ async def cookie_status() -> str:
         result["login_error"] = str(e)
 
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# P2.1 — Content search & browsing
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def search_content(
+    keyword: str,
+    sort: str = "relevance",
+    content_type: str = "all",
+    count: int = 10,
+) -> str:
+    """Search Zhihu content by keyword.
+
+    Args:
+        keyword: Search query string
+        sort: Sort order — "relevance" (default), "newest", or "most_upvoted"
+        content_type: Filter type — "all" (default), "question", "article", "answer"
+        count: Max results to return (default 10, max 20)
+    """
+    count = min(max(count, 1), 20)
+    try:
+        scraper = await state.ensure_browser()
+        results = await scraper.search(keyword, sort=sort, content_type=content_type, count=count)
+        await state.save_cookies()
+        return json.dumps({
+            "keyword": keyword, "sort": sort, "content_type": content_type,
+            "count": len(results), "results": results,
+        }, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        return json.dumps({"error": repr(e), "keyword": keyword})
+
+
+@mcp.tool()
+async def get_question_detail(question_id: str) -> str:
+    """Get Zhihu question detail: title, description, answer count, topics, top answers.
+
+    Args:
+        question_id: Numeric question ID (e.g. '123456789')
+    """
+    try:
+        scraper = await state.ensure_browser()
+        detail = await scraper.get_question_detail(question_id)
+        await state.save_cookies()
+        return json.dumps(detail, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"get_question_detail failed: {e}")
+        return json.dumps({"error": repr(e), "question_id": question_id})
+
+
+@mcp.tool()
+async def get_answer_detail(question_id: str, answer_id: str) -> str:
+    """Get full content of a specific Zhihu answer.
+
+    Args:
+        question_id: Numeric question ID
+        answer_id: Numeric answer ID
+    """
+    try:
+        scraper = await state.ensure_browser()
+        detail = await scraper.get_answer_detail(question_id, answer_id)
+        await state.save_cookies()
+        return json.dumps(detail, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"get_answer_detail failed: {e}")
+        return json.dumps({"error": repr(e), "question_id": question_id, "answer_id": answer_id})
+
+
+@mcp.tool()
+async def get_article_detail(article_id: str) -> str:
+    """Get full content of a Zhihu zhuanlan article.
+
+    Args:
+        article_id: Numeric article ID (from zhuanlan.zhihu.com/p/{id})
+    """
+    try:
+        scraper = await state.ensure_browser()
+        detail = await scraper.get_article_detail(article_id)
+        await state.save_cookies()
+        return json.dumps(detail, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"get_article_detail failed: {e}")
+        return json.dumps({"error": repr(e), "article_id": article_id})
+
+
+# ---------------------------------------------------------------------------
+# P2.2 — Comments
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_comments(url: str, count: int = 20) -> str:
+    """Get comments for a Zhihu question/answer/article page.
+
+    Args:
+        url: Full URL of the content (e.g. 'https://www.zhihu.com/question/123/answer/456')
+        count: Max top-level comments to load (default 20)
+    """
+    try:
+        scraper = await state.ensure_browser()
+        comments = await scraper.get_comments(url, count=count)
+        await state.save_cookies()
+        return json.dumps({
+            "url": url, "count": len(comments), "comments": comments,
+        }, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"get_comments failed: {e}")
+        return json.dumps({"error": repr(e), "url": url})
+
+
+# ---------------------------------------------------------------------------
+# P2.3 — User profile
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def user_profile(token: str) -> str:
+    """Get a Zhihu user's profile: name, headline, bio, stats, recent items.
+
+    Args:
+        token: User URL token (e.g. 'xu-ze-qiu', from zhihu.com/people/{token})
+    """
+    try:
+        scraper = await state.ensure_browser()
+        profile = await scraper.get_user_profile(token)
+        await state.save_cookies()
+        return json.dumps(profile, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"user_profile failed: {e}")
+        return json.dumps({"error": repr(e), "token": token})
+
+
+# ---------------------------------------------------------------------------
+# P2.4 — Auth management
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def check_login_status() -> str:
+    """Check Zhihu login status in detail.
+
+    Returns login state, username if logged in, cookie presence, and expiry info.
+    """
+    from cookies import CookieManager
+
+    mgr = CookieManager()
+    result = mgr.get_status()
+    result["logged_in"] = False
+
+    try:
+        scraper = await state.ensure_browser()
+        if hasattr(scraper, "page") and scraper.page:
+            await scraper.page.goto(
+                "https://www.zhihu.com", wait_until="networkidle", timeout=30000
+            )
+            title = await scraper.page.title()
+            result["page_title"] = title
+            result["logged_in"] = "首页" in title or "私信" in title
+
+            if result["logged_in"]:
+                username = await scraper.page.evaluate("""
+                    () => {
+                        const el = document.querySelector('.AppHeader-profile .Avatar, .AppHeader-userInfo');
+                        return el ? el.getAttribute('alt') || el.textContent?.trim() || '' : '';
+                    }
+                """)
+                if username:
+                    result["username"] = username
+
+            await state.save_cookies()
+        else:
+            result["backend"] = "pinchtab"
+            result["logged_in"] = mgr.has_auth_cookies()
+    except Exception as e:
+        result["login_error"] = str(e)
+
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def delete_cookies() -> str:
+    """Delete cookies file to reset login state.
+
+    After deletion, the next browser operation will start without authentication.
+    """
+    from cookies import CookieManager
+
+    mgr = CookieManager()
+    path = str(mgr.cookies_path)
+    existed = mgr.cookies_path.exists()
+
+    if existed:
+        mgr.cookies_path.unlink()
+
+    return json.dumps({
+        "path": path,
+        "existed": existed,
+        "deleted": existed,
+        "message": "Cookies deleted. Next operation will require re-authentication." if existed
+                   else "No cookie file found.",
+    }, ensure_ascii=False, indent=2)
 
 
 # ---------------------------------------------------------------------------
