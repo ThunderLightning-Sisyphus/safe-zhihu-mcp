@@ -289,7 +289,7 @@ npx mcporter list zhihu-mcp
 ```
 
 ```
-分析这个知乎问题：https://www.zhihu.com/question/38215616
+分析这个知乎问题：https://www.zhihu.com/question/19550225
 ```
 
 ```
@@ -297,7 +297,7 @@ npx mcporter list zhihu-mcp
 ```
 
 ```
-帮我看看这个回答的评论区怎么说：https://www.zhihu.com/question/38215616/answer/123456789
+帮我看看这个回答的评论区怎么说：https://www.zhihu.com/question/19550225/answer/1992353258262504861
 ```
 
 ## 5. 架构
