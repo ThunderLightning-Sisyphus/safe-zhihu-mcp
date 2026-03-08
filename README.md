@@ -258,7 +258,7 @@ npx mcporter list zhihu-mcp
 
 | 工具 | 说明 | 关键参数 |
 |------|------|----------|
-| `user_profile` | 获取用户主页信息 | `token`（必需，URL 中的用户标识，如 `xu-ze-qiu`） |
+| `user_profile` | 获取用户主页信息 | `token`（必需，URL 中的用户标识，如 `jiayaosu`） |
 | `get_activities` | 实时抓取用户动态（会启动浏览器） | `user`（必需）, `count` |
 | `get_new_since` | 查询本地数据库中的历史动态（不爬取） | `hours`, `user` |
 | `get_db_stats` | 数据库统计信息 | 无 |
@@ -293,7 +293,7 @@ npx mcporter list zhihu-mcp
 ```
 
 ```
-看看知乎用户 xu-ze-qiu 最近在做什么
+看看知乎用户 jiayaosu 最近在做什么
 ```
 
 ```
