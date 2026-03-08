@@ -5,19 +5,27 @@ zhihu_activities.db
 zhihu-profile/
 mcp_server.log
 
-# Tests (debug scripts)
-tests/
+# Tests — integration tests (require real cookies/browser)
+tests/integration/
+tests/test_core.py
+tests/test_dom_inspect.py
+tests/test_pinchtab.py
+tests/test_scraper.py
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 venv/
 .venv/
 
-# IDE
+# IDE / local tools
 .vscode/
 .idea/
+.claude/
 
 # OS
 .DS_Store

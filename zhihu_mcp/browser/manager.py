@@ -16,7 +16,7 @@ from playwright.async_api import (
     Playwright,
 )
 
-from config import BrowserConfig
+from zhihu_mcp.config import BrowserConfig
 from .stealth import STEALTH_SCRIPT, ADVANCED_STEALTH_SCRIPT
 
 logger = logging.getLogger(__name__)

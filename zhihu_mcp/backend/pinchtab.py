@@ -14,7 +14,7 @@ from typing import Optional, List, Any
 
 import aiohttp
 
-from scraper import ActivityCard, ZhihuScraper
+from zhihu_mcp.scraper import ActivityCard, ZhihuScraper
 
 logger = logging.getLogger(__name__)
 

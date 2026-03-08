@@ -57,7 +57,7 @@ class _State:
     @property
     def db(self):
         if self._db is None:
-            from storage import Database
+            from zhihu_mcp.storage import Database
             self._db = Database()
         return self._db
 
@@ -65,13 +65,13 @@ class _State:
         if self._initialized:
             return self._scraper
 
-        from config import load_config
+        from zhihu_mcp.config import load_config
 
         app_config = load_config()
         is_headless = os.environ.get("HEADLESS", "true").lower() == "true"
 
         if app_config.browser.use_pinchtab:
-            from pinchtab_client import PinchtabScraper
+            from zhihu_mcp.backend.pinchtab import PinchtabScraper
 
             self._scraper = PinchtabScraper(
                 app_config.browser.pinchtab_url,
@@ -82,9 +82,9 @@ class _State:
             logger.info("Pinchtab scraper initialized for MCP server")
             return self._scraper
 
-        from browser import BrowserManager
-        from config import BrowserConfig
-        from scraper import ZhihuScraper
+        from zhihu_mcp.browser import BrowserManager
+        from zhihu_mcp.config import BrowserConfig
+        from zhihu_mcp.scraper import ZhihuScraper
 
         config = BrowserConfig(
             headless=is_headless,
@@ -232,7 +232,7 @@ async def get_db_stats() -> str:
 @mcp.tool()
 async def cookie_status() -> str:
     """Check if cookies are valid by visiting Zhihu and checking login status."""
-    from cookies import CookieManager
+    from zhihu_mcp.cookies import CookieManager
 
     mgr = CookieManager()
     result = mgr.get_status()
@@ -399,7 +399,7 @@ async def check_login_status() -> str:
 
     Returns login state, username if logged in, cookie presence, and expiry info.
     """
-    from cookies import CookieManager
+    from zhihu_mcp.cookies import CookieManager
 
     mgr = CookieManager()
     result = mgr.get_status()
@@ -441,7 +441,7 @@ async def delete_cookies() -> str:
 
     After deletion, the next browser operation will start without authentication.
     """
-    from cookies import CookieManager
+    from zhihu_mcp.cookies import CookieManager
 
     mgr = CookieManager()
     path = str(mgr.cookies_path)
@@ -536,9 +536,41 @@ async def _run_self_tests():
             print(f"  FAILED: {e}")
             return None
 
+    # Auth / DB
     await run_test("get_db_stats", get_db_stats())
     await run_test("cookie_status", cookie_status())
-    await run_test("get_activities(xu-ze-qiu, 3)", get_activities("xu-ze-qiu", 3))
+
+    # Search
+    await run_test("search_content(大模型Agent)", search_content("大模型Agent", count=3))
+
+    # Question detail (知乎上的经典问题)
+    await run_test("get_question_detail(19550225)", get_question_detail("19550225"))
+
+    # Answer detail — 取问题第一个回答做验证
+    q_result = await run_test("get_question_detail(for_answer)", get_question_detail("19550225"))
+    if q_result and q_result.get("answers"):
+        first = q_result["answers"][0]
+        aid = first.get("answer_id", "")
+        if aid:
+            await run_test(
+                f"get_answer_detail(19550225, {aid})",
+                get_answer_detail("19550225", aid),
+            )
+
+    # Article detail (知乎专栏文章)
+    await run_test("get_article_detail(294862987)", get_article_detail("294862987"))
+
+    # Comments
+    await run_test(
+        "get_comments(question/19550225)",
+        get_comments("https://www.zhihu.com/question/19550225", count=5),
+    )
+
+    # User profile
+    await run_test("user_profile(jiayaosu)", user_profile("jiayaosu"))
+
+    # Activity monitoring
+    await run_test("get_activities(jiayaosu, 3)", get_activities("jiayaosu", 3))
     await run_test("get_new_since(hours=24)", get_new_since(24))
 
     await state.shutdown()

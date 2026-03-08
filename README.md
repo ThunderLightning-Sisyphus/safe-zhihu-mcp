@@ -328,22 +328,27 @@ npx mcporter list zhihu-mcp
 ```
 zhihu-mcp/
 ├── mcp_server.py            # MCP 服务器入口（12 个工具定义）
-├── scraper.py               # 知乎页面抓取（DOM 提取 + 内部 API）
-├── config.py                # 配置管理
-├── storage.py               # SQLite 数据层
-├── errors.py                # 自定义异常
-├── pinchtab_client.py       # Pinchtab HTTP 后端（备用）
+├── zhihu_mcp/               # 核心包
+│   ├── scraper.py           # 知乎页面抓取（DOM 提取 + 内部 API）
+│   ├── config.py            # 配置管理
+│   ├── storage.py           # SQLite 数据层
+│   ├── errors.py            # 自定义异常
+│   ├── browser/
+│   │   ├── manager.py       # 浏览器生命周期管理
+│   │   └── stealth.py       # 反检测 JS 脚本注入
+│   ├── cookies/
+│   │   └── manager.py       # Cookie 加载与持久化
+│   └── backend/
+│       └── pinchtab.py      # Pinchtab HTTP 后端（备用）
+├── skills/                  # OpenClaw 高级技能
+│   ├── research-on-zhihu/
+│   ├── analyze-zhihu-question/
+│   ├── analyze-zhihu-answer/
+│   └── track-zhihu-user/
+├── tests/                   # 单元测试
+├── config.example.json      # 配置文件模板
 ├── requirements.txt         # Python 依赖
-├── browser/
-│   ├── manager.py           # 浏览器生命周期管理
-│   └── stealth.py           # 反检测 JS 脚本注入
-├── cookies/
-│   └── manager.py           # Cookie 加载与持久化
-└── skills/                  # OpenClaw 高级技能
-    ├── research-on-zhihu/
-    ├── analyze-zhihu-question/
-    ├── analyze-zhihu-answer/
-    └── track-zhihu-user/
+└── pyproject.toml           # 项目元数据与打包配置
 ```
 
 ## 7. 常见问题
