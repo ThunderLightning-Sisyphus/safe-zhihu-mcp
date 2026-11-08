@@ -545,6 +545,47 @@ class ZhihuScraper:
             url: Full URL to the content page
             count: Max top-level comments to load
         """
+        endpoint = None
+        answer_match = re.search(r"/question/\d+/answer/(\d+)/?$", url)
+        question_match = re.search(r"/question/(\d+)/?$", url)
+        article_match = re.search(r"/p/(\d+)/?$", url)
+        if answer_match:
+            endpoint = f"https://www.zhihu.com/api/v4/answers/{answer_match.group(1)}/root_comments"
+        elif question_match:
+            endpoint = f"https://www.zhihu.com/api/v4/questions/{question_match.group(1)}/root_comments"
+        elif article_match:
+            endpoint = f"https://www.zhihu.com/api/v4/articles/{article_match.group(1)}/root_comments"
+
+        if endpoint:
+            try:
+                response = await self.page.context.request.get(
+                    endpoint,
+                    params={"order": "normal", "limit": count, "offset": 0, "status": "open"},
+                    headers={"Referer": url},
+                    timeout=30_000,
+                )
+                if response.status == 200:
+                    payload = await response.json()
+                    items = payload.get("data", []) if isinstance(payload, dict) else []
+                    parsed = []
+                    for item in items[:count]:
+                        if not isinstance(item, dict):
+                            continue
+                        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+                        parsed.append({
+                            "comment_id": str(item.get("id", "")),
+                            "author": author.get("name", ""),
+                            "author_token": author.get("url_token", ""),
+                            "content": _clean_html(str(item.get("content", "")))[:2000],
+                            "like_count": item.get("like_count", 0),
+                            "reply_count": item.get("child_comment_count", 0),
+                            "created_time": item.get("created_time"),
+                        })
+                    if parsed:
+                        return parsed
+            except Exception as exc:
+                logger.info("Comment API unavailable; using DOM fallback: %s", type(exc).__name__)
+
         current = self.page.url
         if not current or current.split('?')[0] != url.split('?')[0]:
             await self._navigate(url)
@@ -601,6 +642,39 @@ class ZhihuScraper:
                 return results;
             }
         """, count)
+
+    async def get_comment_replies(self, comment_id: str, count: int = 20) -> List[dict]:
+        """Read replies using the logged-in browser context; never writes data."""
+        endpoint = (
+            f"https://www.zhihu.com/api/v4/comments/{comment_id}/child_comments"
+            f"?limit={count}&offset=0"
+        )
+        response = await self.page.context.request.get(
+            endpoint,
+            headers={"Referer": "https://www.zhihu.com/"},
+            timeout=30_000,
+        )
+        if response.status != 200:
+            raise RuntimeError(f"Zhihu comment API returned HTTP {response.status}")
+        payload = await response.json()
+        items = payload.get("data", []) if isinstance(payload, dict) else []
+        results = []
+        for item in items[:count]:
+            if not isinstance(item, dict):
+                continue
+            author = item.get("author") if isinstance(item.get("author"), dict) else {}
+            reply_to = item.get("reply_to_author") if isinstance(item.get("reply_to_author"), dict) else {}
+            content = _clean_html(str(item.get("content", "")))[:2000]
+            results.append({
+                "comment_id": str(item.get("id", "")),
+                "author": author.get("name", ""),
+                "author_token": author.get("url_token", ""),
+                "reply_to": reply_to.get("name", ""),
+                "content": content,
+                "like_count": item.get("like_count", 0),
+                "created_time": item.get("created_time"),
+            })
+        return results
 
     # ------------------------------------------------------------------
     # User profile

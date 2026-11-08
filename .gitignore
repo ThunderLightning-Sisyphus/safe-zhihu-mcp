@@ -1,9 +1,4 @@
-# Runtime data
-cookies.json
-config.json
-zhihu_activities.db
-zhihu-profile/
-mcp_server.log
+# Runtime data is kept outside the repository by platformdirs.
 
 # Tests — integration tests (require real cookies/browser)
 tests/integration/
@@ -21,6 +16,7 @@ dist/
 build/
 venv/
 .venv/
+.pytest_cache/
 
 # IDE / local tools
 .vscode/

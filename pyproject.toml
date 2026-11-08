@@ -1,31 +1,35 @@
 [project]
-name = "zhihu-mcp"
-version = "0.1.0"
-description = "MCP server for Zhihu — lets AI agents interact with zhihu.com"
+name = "safe-zhihu-mcp"
+version = "1.0.0"
+description = "Hardened read-only Zhihu MCP server with an isolated browser profile"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
-    "playwright>=1.40.0",
-    "mcp>=1.0.0",
-    "pycookiecheat>=0.7.0",
-    "rookiepy>=0.5.0",
-    "aiohttp>=3.9.0",
+    "playwright>=1.56.0,<2",
+    "mcp>=1.20.0,<2",
+    "platformdirs>=4.3.0,<5",
 ]
 
 [project.scripts]
-zhihu-mcp = "mcp_server:main"
+safe-zhihu-mcp = "mcp_server:main"
+safe-zhihu-login = "login:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
+    "PyYAML>=6.0,<7",
+    "pytest>=8.0,<9",
+    "pytest-asyncio>=0.23,<1",
 ]
 
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["zhihu_mcp*"]
+
+[tool.setuptools]
+py-modules = ["mcp_server", "login"]

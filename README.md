@@ -1,390 +1,71 @@
-# zhihu-mcp
+# Safe Zhihu MCP
 
-MCP for 知乎/zhihu.com。
+`safe-zhihu-mcp` 是 [`alizeeblack-code/zhihu-mcp`](https://github.com/alizeeblack-code/zhihu-mcp)
+的安全只读派生版。它通过独立的 Edge/Chrome 浏览器资料访问知乎，不需要知乎开放平台
+Access Secret，也不会读取或导出日常浏览器 Cookie。
 
-让 AI Agent 能够搜索知乎内容、阅读问题和回答、分析评论区、追踪用户动态 — 通过标准 MCP 协议接入任何 AI 客户端。
+## 能力
 
-## 项目简介
+- 搜索问题、回答和文章，支持排序与类型筛选
+- 读取问题信息和可见高赞回答
+- 读取回答全文与专栏文章全文
+- 读取一级评论和楼中楼回复
+- 读取用户公开资料与近期公开动态
+- 用户明确要求时，将动态保存到本地 SQLite 供后续查询
 
-**主要功能**
+## 硬性安全边界
 
-<details>
-<summary><b>1. 搜索知乎内容</b></summary>
+- MCP 中不存在发布、编辑、评论、回复、点赞、关注、上传或删除工具。
+- 登录只能由用户在独立可见浏览器中亲自完成。
+- 不读取 Edge/Chrome 日常资料，不导出 `cookies.json`。
+- 浏览器沙箱与 HTTPS 验证保持启用，拒绝跨域重定向。
+- 主页面只能导航到 `zhihu.com` 和 `zhuanlan.zhihu.com`。
+- 所有 ID、用户名、关键词和 URL 均经过严格验证。
+- 单并发访问，最短间隔 3 秒，每小时最多 60 次、每天最多 200 次。
+- 输出限制为 500,000 字符，浏览器下载被禁用。
+- 运行数据保存在操作系统用户数据目录，不进入仓库。
 
-按关键词搜索知乎，支持按相关性、时间、热度排序，可过滤内容类型（问题/回答/文章）。
+这些措施不能消除知乎验证码、限流或账号限制风险。建议使用副号并控制使用频率。
 
-基于知乎内部 API，比 DOM 抓取更稳定可靠。
+## 安装
 
-</details>
-
-<details>
-<summary><b>2. 获取问题详情</b></summary>
-
-获取知乎问题的完整信息：
-- 问题标题、描述、话题标签
-- 关注数、浏览数、回答数
-- Top 10 高赞回答列表（含作者、摘要、点赞数、链接）
-
-</details>
-
-<details>
-<summary><b>3. 阅读回答全文</b></summary>
-
-获取指定回答的完整内容：
-- 作者名称和简介
-- 回答正文（图片替换为 `[图片]` 标记）
-- 点赞数、评论数
-- 发布/编辑时间
-
-</details>
-
-<details>
-<summary><b>4. 阅读专栏文章</b></summary>
-
-获取知乎专栏（zhuanlan.zhihu.com）文章全文，包括作者、点赞数、评论数。
-
-</details>
-
-<details>
-<summary><b>5. 获取评论区</b></summary>
-
-获取回答或文章的评论列表，包括评论内容和作者。支持自定义加载数量。
-
-</details>
-
-<details>
-<summary><b>6. 查看用户资料</b></summary>
-
-获取知乎用户主页信息：昵称、简介、关注数、粉丝数、获赞数、回答数、文章数等。
-
-</details>
-
-<details>
-<summary><b>7. 追踪用户动态</b></summary>
-
-实时抓取用户最近的活动（回答问题、发表文章、赞同内容等），自动存入本地 SQLite 数据库，支持历史查询。
-
-</details>
-
-**风险说明**
-
-本项目使用 Playwright 驱动无头浏览器访问知乎，注入 stealth 反检测脚本。正常使用频率下（不频繁大量请求），风险较低。建议：
-- 使用已登录的 Cookie，避免频繁登录操作
-- 控制调用频率，避免短时间内大量请求
-- 本项目基于学习目的，禁止用于违法行为
-
-## 1. 快速开始
-
-### 1.1. 安装
-
-需要 **Python 3.10+**（`mcp` 包要求）。
-
-```bash
-# 克隆项目
-git clone https://github.com/ay/zhihu-mcp.git
-cd zhihu-mcp
-
-# 创建虚拟环境并安装依赖
-python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# 安装 Playwright 浏览器
-playwright install chromium
+```text
+uv tool install .
+uv tool run --from playwright playwright install chromium
+safe-zhihu-login
 ```
 
-### 1.2. 配置 Cookie
+第三步会打开独立浏览器。请亲自登录知乎，成功后回到终端按 Enter。
 
-知乎需要登录才能正常使用。将浏览器中的知乎 Cookie 导出为 `cookies.json`（Playwright 格式），放在项目根目录。
+## MCP 启动
 
-**获取方式：**
-
-1. 使用浏览器扩展（如 EditThisCookie、Cookie-Editor）导出
-2. 从其他知乎项目（如 zhihu_monitor）复制
-3. 确保包含 `z_c0`（认证 token）和 `d_c0`（设备 token）
-
-### 1.3. 启动 MCP 服务
-
-```bash
-# 默认：无头模式
-python3 mcp_server.py
-
-# 如果需要看到浏览器界面（调试用）
-HEADLESS=false python3 mcp_server.py
+```text
+safe-zhihu-mcp
 ```
 
-### 1.4. 验证
+可用工具：
 
-```bash
-# 运行内置自测
-python3 mcp_server.py --test
+- `search_content`
+- `get_question_detail`
+- `get_answer_detail`
+- `get_article_detail`
+- `get_comments`
+- `get_comment_replies`
+- `user_profile`
+- `get_activities`
+- `get_new_since`
+- `check_login_status`
+
+`get_activities(..., persist=false)` 默认不保存。只有显式传入 `persist=true` 才写入本地数据库。
+
+## 开发验证
+
+```text
+uv sync --extra dev
+uv run pytest -q
 ```
 
-## 2. MCP 客户端接入
+## 许可证与来源
 
-本服务使用 **stdio** 传输协议（标准输入/输出），兼容所有支持 stdio MCP 的客户端。
-
-<details>
-<summary><b>Claude Code CLI</b></summary>
-
-```bash
-claude mcp add zhihu-mcp -- /path/to/zhihu-mcp/venv/bin/python3 /path/to/zhihu-mcp/mcp_server.py
-```
-
-</details>
-
-<details>
-<summary><b>Claude Desktop</b></summary>
-
-编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`：
-
-```json
-{
-  "mcpServers": {
-    "zhihu-mcp": {
-      "command": "/path/to/zhihu-mcp/venv/bin/python3",
-      "args": ["/path/to/zhihu-mcp/mcp_server.py"],
-      "env": {
-        "HEADLESS": "true"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Cursor</b></summary>
-
-在项目根目录创建 `.cursor/mcp.json`：
-
-```json
-{
-  "mcpServers": {
-    "zhihu-mcp": {
-      "command": "/path/to/zhihu-mcp/venv/bin/python3",
-      "args": ["/path/to/zhihu-mcp/mcp_server.py"],
-      "env": {
-        "HEADLESS": "true"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>VSCode</b></summary>
-
-在项目根目录创建 `.vscode/mcp.json`：
-
-```json
-{
-  "servers": {
-    "zhihu-mcp": {
-      "command": "/path/to/zhihu-mcp/venv/bin/python3",
-      "args": ["/path/to/zhihu-mcp/mcp_server.py"],
-      "env": {
-        "HEADLESS": "true"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>OpenClaw（通过 MCPorter）</b></summary>
-
-```bash
-# 安装 MCPorter（如未安装）
-npm i -g mcporter
-
-# 添加 zhihu-mcp 到 MCPorter 配置
-npx mcporter config add zhihu-mcp /path/to/zhihu-mcp/venv/bin/python3 /path/to/zhihu-mcp/mcp_server.py
-
-# 验证
-npx mcporter list zhihu-mcp
-```
-
-或直接编辑 MCPorter 配置文件（通常在 `~/.config/mcporter/config.json` 或 OpenClaw 项目的 `config/mcporter.json`）：
-
-```json
-{
-  "mcpServers": {
-    "zhihu-mcp": {
-      "command": "/path/to/zhihu-mcp/venv/bin/python3",
-      "args": ["/path/to/zhihu-mcp/mcp_server.py"],
-      "env": {
-        "HEADLESS": "true",
-        "TMPDIR": "/tmp"
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>其他 MCP 客户端</b></summary>
-
-任何支持 stdio MCP 协议的客户端都可以接入。核心配置：
-
-- **command**: `python3`（或 venv 中的 python 路径）
-- **args**: `["/path/to/zhihu-mcp/mcp_server.py"]`
-- **transport**: `stdio`
-
-</details>
-
-## 3. 可用 MCP 工具
-
-连接成功后，可使用以下 12 个 MCP 工具：
-
-### 内容搜索与浏览
-
-| 工具 | 说明 | 关键参数 |
-|------|------|----------|
-| `search_content` | 搜索知乎内容 | `keyword`（必需）, `sort`（relevance/newest/most_upvoted）, `content_type`（all/question/article/answer）, `count` |
-| `get_question_detail` | 获取问题详情 + Top 回答列表 | `question_id`（必需） |
-| `get_answer_detail` | 获取回答完整内容 | `question_id`（必需）, `answer_id`（必需） |
-| `get_article_detail` | 获取专栏文章全文 | `article_id`（必需） |
-| `get_comments` | 获取评论列表 | `url`（必需，内容页完整 URL）, `count` |
-
-### 用户相关
-
-| 工具 | 说明 | 关键参数 |
-|------|------|----------|
-| `user_profile` | 获取用户主页信息 | `token`（必需，URL 中的用户标识，如 `jiayaosu`） |
-| `get_activities` | 实时抓取用户动态（会启动浏览器） | `user`（必需）, `count` |
-| `get_new_since` | 查询本地数据库中的历史动态（不爬取） | `hours`, `user` |
-| `get_db_stats` | 数据库统计信息 | 无 |
-
-### 认证管理
-
-| 工具 | 说明 | 关键参数 |
-|------|------|----------|
-| `check_login_status` | 检查登录状态，返回用户名 | 无 |
-| `cookie_status` | Cookie 文件状态检查 | 无 |
-| `delete_cookies` | 删除 Cookie 文件，重置登录 | 无 |
-
-## 4. OpenClaw Skills
-
-预置的高级技能，将多个 MCP 工具组合成完整的工作流：
-
-| Skill | 说明 |
-|-------|------|
-| [research-on-zhihu](skills/research-on-zhihu/SKILL.md) | 知乎话题研究 — 搜索 + 阅读高赞回答 + 分析评论 → 输出研究报告 |
-| [analyze-zhihu-question](skills/analyze-zhihu-question/SKILL.md) | 问题深度分析 — 获取问题详情 + 逐个阅读回答 → 输出观点分布 |
-| [analyze-zhihu-answer](skills/analyze-zhihu-answer/SKILL.md) | 回答深度分析 — 回答全文 + 评论区讨论 → 输出可信度评估 |
-| [track-zhihu-user](skills/track-zhihu-user/SKILL.md) | 用户追踪 — 资料 + 动态抓取 → 输出用户画像和活跃领域 |
-
-### 使用示例
-
-```
-帮我研究一下知乎上关于"大模型Agent"的讨论
-```
-
-```
-分析这个知乎问题：https://www.zhihu.com/question/19550225
-```
-
-```
-看看知乎用户 jiayaosu 最近在做什么
-```
-
-```
-帮我看看这个回答的评论区怎么说：https://www.zhihu.com/question/19550225/answer/1992353258262504861
-```
-
-## 5. 架构
-
-```
-┌─────────────┐     MCP/stdio      ┌──────────────┐    Playwright     ┌──────────────┐
-│   AI Agent   │◄──────────────────►│  mcp_server  │◄────────────────►│   Chromium    │
-│              │                    │              │   (headless)      │  + stealth    │
-│ Claude Code  │                    │   12 tools   │                   └──────┬───────┘
-│ Cursor       │                    └──────┬───────┘                          │
-│ OpenClaw     │                           │                                  ▼
-│ ...          │                    ┌──────┴───────┐                  ┌──────────────┐
-└─────────────┘                    │   SQLite DB   │                  │  zhihu.com   │
-                                   │  (活动历史)    │                  └──────────────┘
-                                   └──────────────┘
-```
-
-**工作原理：**
-1. AI Agent 通过 MCP stdio 协议调用工具
-2. `mcp_server.py` 接收请求，驱动 Playwright 无头浏览器
-3. 浏览器注入 stealth 反检测脚本，访问知乎页面
-4. 搜索功能使用知乎内部 API（`/api/v4/search_v3`），更稳定
-5. 其他功能通过 DOM 提取页面数据
-6. 用户动态自动存入 SQLite，支持历史查询
-
-## 6. 项目结构
-
-```
-zhihu-mcp/
-├── mcp_server.py            # MCP 服务器入口（12 个工具定义）
-├── zhihu_mcp/               # 核心包
-│   ├── scraper.py           # 知乎页面抓取（DOM 提取 + 内部 API）
-│   ├── config.py            # 配置管理
-│   ├── storage.py           # SQLite 数据层
-│   ├── errors.py            # 自定义异常
-│   ├── browser/
-│   │   ├── manager.py       # 浏览器生命周期管理
-│   │   └── stealth.py       # 反检测 JS 脚本注入
-│   ├── cookies/
-│   │   └── manager.py       # Cookie 加载与持久化
-│   └── backend/
-│       └── pinchtab.py      # Pinchtab HTTP 后端（备用）
-├── skills/                  # OpenClaw 高级技能
-│   ├── research-on-zhihu/
-│   ├── analyze-zhihu-question/
-│   ├── analyze-zhihu-answer/
-│   └── track-zhihu-user/
-├── tests/                   # 单元测试
-├── config.example.json      # 配置文件模板
-├── requirements.txt         # Python 依赖
-└── pyproject.toml           # 项目元数据与打包配置
-```
-
-## 7. 常见问题
-
-**Q: Cookie 过期了怎么办？**
-
-重新从浏览器导出 Cookie，替换 `cookies.json`。关键 cookie `z_c0` 通常有效期约 6 个月。
-
-**Q: 搜索结果为空？**
-
-搜索功能使用知乎内部 API，需要有效的登录 Cookie。请先用 `check_login_status` 确认登录状态。
-
-**Q: 浏览器启动失败？**
-
-确保已运行 `playwright install chromium` 安装浏览器。macOS 上如果遇到沙箱问题，设置环境变量 `TMPDIR=/tmp`。
-
-**Q: 和 zhihu_monitor 项目的关系？**
-
-zhihu-mcp 是 zhihu_monitor 的升级版，增加了搜索、内容详情、评论、用户资料等功能，并以标准 MCP 协议提供服务。
-
-## 技术栈
-
-- **Python 3.10+**
-- **[Playwright](https://playwright.dev/python/)** — 浏览器自动化 + stealth 反检测
-- **[FastMCP (mcp)](https://github.com/jlowin/fastmcp)** — MCP 协议服务器框架
-- **SQLite** — 本地数据持久化
-
-## 致谢
-
-本项目的开发受到以下开源项目的启发：
-
-- **[xiaohongshu-mcp](https://github.com/xpzouying/xiaohongshu-mcp)** by [@xpzouying](https://github.com/xpzouying) — 小红书 MCP 服务器。本项目的架构设计、MCP 工具组织方式和 OpenClaw Skills 格式均参考了该项目。
-- **[zhihu_monitor](https://github.com/shural/zhihu_monitor)** by [@shural](https://github.com/shural) — 知乎用户动态监控工具。本项目的知乎 stealth 反检测策略、DOM 选择器和 Cookie 管理逻辑源自该项目。
-
-感谢这两个项目的作者和贡献者们的优秀工作。
-
-## License
-
-[MIT](LICENSE)
+本项目保留原项目 MIT License 和作者版权。安全改造不代表知乎官方认可，也不改变知乎
+网站与内容的使用规则。

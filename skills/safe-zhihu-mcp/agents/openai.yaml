@@ -1,0 +1,8 @@
+interface:
+  display_name: "Safe Zhihu MCP"
+  short_description: "安全只读搜索知乎全文、评论和用户动态"
+  default_prompt: "Use $safe-zhihu-mcp to research Zhihu and cite the source links."
+
+policy:
+  allow_implicit_invocation: true
+
